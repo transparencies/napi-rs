@@ -1,11 +1,11 @@
 #![allow(deprecated)]
 
-use std::{ptr, usize};
+use std::ptr;
 
 use super::{FromNapiValue, ToNapiValue, TypeName, Unknown, ValidateNapiValue};
 
 #[cfg(feature = "napi4")]
-use crate::threadsafe_function::ThreadsafeFunction;
+use crate::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunction};
 pub use crate::JsFunction;
 use crate::{check_pending_exception, check_status, sys, Env, NapiRaw, Result, ValueType};
 
@@ -180,7 +180,9 @@ impl<'scope, Args: JsValuesTupleIntoVec, Return> Function<'scope, Args, Return> 
 
   #[cfg(feature = "napi4")]
   /// Create a threadsafe function from the JavaScript function.
-  pub fn build_threadsafe_function(&self) -> ThreadsafeFunctionBuilder<Args, Return> {
+  pub fn build_threadsafe_function<T: 'static>(
+    &self,
+  ) -> ThreadsafeFunctionBuilder<T, Args, Return> {
     ThreadsafeFunctionBuilder {
       env: self.env,
       value: self.value,
@@ -244,28 +246,45 @@ impl<'scope, Args: JsValuesTupleIntoVec, Return: FromNapiValue> Function<'scope,
 
 #[cfg(feature = "napi4")]
 pub struct ThreadsafeFunctionBuilder<
-  Args: JsValuesTupleIntoVec,
+  'env,
+  T: 'static,
+  Args: 'static + JsValuesTupleIntoVec,
   Return,
+  const CalleeHandled: bool = false,
   const Weak: bool = false,
   const MaxQueueSize: usize = 0,
 > {
   pub(crate) env: sys::napi_env,
   pub(crate) value: sys::napi_value,
-  _args: std::marker::PhantomData<Args>,
+  _args: std::marker::PhantomData<(T, &'env Args)>,
   _return: std::marker::PhantomData<Return>,
 }
 
 #[cfg(feature = "napi4")]
 impl<
-    Args: JsValuesTupleIntoVec,
+    'env,
+    T: 'static,
+    Args: 'static + JsValuesTupleIntoVec,
     Return: FromNapiValue,
+    const CalleeHandled: bool,
     const Weak: bool,
     const MaxQueueSize: usize,
-  > ThreadsafeFunctionBuilder<Args, Return, Weak, MaxQueueSize>
+  > ThreadsafeFunctionBuilder<'env, T, Args, Return, CalleeHandled, Weak, MaxQueueSize>
 {
   pub fn weak<const NewWeak: bool>(
     self,
-  ) -> ThreadsafeFunctionBuilder<Args, Return, NewWeak, MaxQueueSize> {
+  ) -> ThreadsafeFunctionBuilder<'env, T, Args, Return, CalleeHandled, NewWeak, MaxQueueSize> {
+    ThreadsafeFunctionBuilder {
+      env: self.env,
+      value: self.value,
+      _args: std::marker::PhantomData,
+      _return: std::marker::PhantomData,
+    }
+  }
+
+  pub fn callee_handled<const NewCalleeHandled: bool>(
+    self,
+  ) -> ThreadsafeFunctionBuilder<'env, T, Args, Return, NewCalleeHandled, Weak, MaxQueueSize> {
     ThreadsafeFunctionBuilder {
       env: self.env,
       value: self.value,
@@ -276,7 +295,7 @@ impl<
 
   pub fn max_queue_size<const NewMaxQueueSize: usize>(
     self,
-  ) -> ThreadsafeFunctionBuilder<Args, Return, Weak, NewMaxQueueSize> {
+  ) -> ThreadsafeFunctionBuilder<'env, T, Args, Return, CalleeHandled, Weak, NewMaxQueueSize> {
     ThreadsafeFunctionBuilder {
       env: self.env,
       value: self.value,
@@ -285,7 +304,35 @@ impl<
     }
   }
 
-  pub fn build(self) -> Result<ThreadsafeFunction<Args, Return, false, Weak, MaxQueueSize>> {
+  pub fn build_callback<CallJsBackArgs, Callback>(
+    &self,
+    call_js_back: Callback,
+  ) -> Result<ThreadsafeFunction<T, Return, CallJsBackArgs, CalleeHandled, Weak, MaxQueueSize>>
+  where
+    CallJsBackArgs: 'static + JsValuesTupleIntoVec,
+    Callback: 'static + Send + FnMut(ThreadsafeCallContext<T>) -> Result<CallJsBackArgs>,
+  {
+    ThreadsafeFunction::<T, Return, Args, CalleeHandled, Weak, MaxQueueSize>::create(
+      self.env,
+      self.value,
+      call_js_back,
+    )
+  }
+}
+
+#[cfg(feature = "napi4")]
+impl<
+    'env,
+    T: 'static + JsValuesTupleIntoVec,
+    Return: FromNapiValue,
+    const CalleeHandled: bool,
+    const Weak: bool,
+    const MaxQueueSize: usize,
+  > ThreadsafeFunctionBuilder<'env, T, T, Return, CalleeHandled, Weak, MaxQueueSize>
+{
+  pub fn build(
+    &self,
+  ) -> Result<ThreadsafeFunction<T, Return, T, CalleeHandled, Weak, MaxQueueSize>> {
     unsafe { ThreadsafeFunction::from_napi_value(self.env, self.value) }
   }
 }

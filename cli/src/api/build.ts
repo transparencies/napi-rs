@@ -38,7 +38,7 @@ import {
   createWasiBrowserBinding,
 } from './templates/load-wasi-template.js'
 import {
-  WASI_WORKER_BROWSER_TEMPLATE,
+  createWasiBrowserWorkerBinding,
   WASI_WORKER_TEMPLATE,
 } from './templates/wasi-worker-template.js'
 
@@ -517,10 +517,10 @@ class Builder {
       Object.assign(this.envs, {
         CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/${targetArch}-linux-android24-clang`,
         CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/${targetArch}-linux-androideabi24-clang`,
-        CC: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/${targetArch}-linux-${targetPlatform}-clang`,
-        CXX: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/${targetArch}-linux-${targetPlatform}-clang++`,
-        AR: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/llvm-ar`,
-        RANLIB: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/llvm-ranlib`,
+        TARGET_CC: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/${targetArch}-linux-${targetPlatform}-clang`,
+        TARGET_CXX: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/${targetArch}-linux-${targetPlatform}-clang++`,
+        TARGET_AR: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/llvm-ar`,
+        TARGET_RANLIB: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin/llvm-ranlib`,
         ANDROID_NDK: ANDROID_NDK_LATEST_HOME,
         PATH: `${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/${hostPlatform}-x86_64/bin:${process.env.PATH}`,
       })
@@ -540,6 +540,21 @@ class Builder {
 
       if (WASI_SDK_PATH && existsSync(WASI_SDK_PATH)) {
         this.envs.CARGO_TARGET_WASM32_WASI_PREVIEW1_THREADS_LINKER = join(
+          WASI_SDK_PATH,
+          'bin',
+          'wasm-ld',
+        )
+        this.envs.CARGO_TARGET_WASM32_WASIP1_LINKER = join(
+          WASI_SDK_PATH,
+          'bin',
+          'wasm-ld',
+        )
+        this.envs.CARGO_TARGET_WASM32_WASIP1_THREADS_LINKER = join(
+          WASI_SDK_PATH,
+          'bin',
+          'wasm-ld',
+        )
+        this.envs.CARGO_TARGET_WASM32_WASIP2_LINKER = join(
           WASI_SDK_PATH,
           'bin',
           'wasm-ld',
@@ -714,6 +729,7 @@ class Builder {
     const src = join(this.targetDir, this.target.triple, profile, srcName)
     debug(`Copy artifact from: [${src}]`)
     const dest = join(this.outputDir, destName)
+    const isWasm = dest.endsWith('.wasm')
 
     try {
       if (await fileExists(dest)) {
@@ -722,9 +738,44 @@ class Builder {
       }
       debug('Copy artifact to:')
       debug('  %i', dest)
-      await copyFileAsync(src, dest)
+      if (isWasm) {
+        const { ModuleConfig } = await import('@napi-rs/wasm-tools')
+        debug('Generate debug wasm module')
+        try {
+          const debugWasmModule = new ModuleConfig()
+            .generateDwarf(true)
+            .generateNameSection(true)
+            .generateProducersSection(true)
+            .preserveCodeTransform(true)
+            .strictValidate(false)
+            .parse(await readFileAsync(src))
+          const debugWasmBinary = debugWasmModule.emitWasm(true)
+          await writeFileAsync(
+            dest.replace('.wasm', '.debug.wasm'),
+            debugWasmBinary,
+          )
+          debug('Generate release wasm module')
+          const releaseWasmModule = new ModuleConfig()
+            .generateDwarf(false)
+            .generateNameSection(false)
+            .generateProducersSection(false)
+            .preserveCodeTransform(false)
+            .strictValidate(false)
+            .onlyStableFeatures(false)
+            .parse(debugWasmBinary)
+          const releaseWasmBinary = releaseWasmModule.emitWasm(false)
+          await writeFileAsync(dest, releaseWasmBinary)
+        } catch (e) {
+          debug.warn(
+            `Failed to generate debug wasm module: ${(e as any).message ?? e}`,
+          )
+          await copyFileAsync(src, dest)
+        }
+      } else {
+        await copyFileAsync(src, dest)
+      }
       this.outputs.push({
-        kind: dest.endsWith('.node') ? 'node' : 'exe',
+        kind: dest.endsWith('.node') ? 'node' : isWasm ? 'wasm' : 'exe',
         path: dest,
       })
       return dest
@@ -783,7 +834,20 @@ class Builder {
       this.envs.TYPE_DEF_TMP_PATH,
       this.options.constEnum ?? true,
       !this.options.noDtsHeader
-        ? this.options.dtsHeader ?? DEFAULT_TYPE_DEF_HEADER
+        ? this.options.dtsHeader ??
+            (this.config.dtsHeaderFile
+              ? await readFileAsync(
+                  join(this.cwd, this.config.dtsHeaderFile),
+                  'utf-8',
+                ).catch(() => {
+                  debug.warn(
+                    `Failed to read dts header file ${this.config.dtsHeaderFile}`,
+                  )
+                  return null
+                })
+              : null) ??
+            this.config.dtsHeader ??
+            DEFAULT_TYPE_DEF_HEADER
         : '',
     )
 
@@ -861,6 +925,8 @@ class Builder {
           name,
           this.config.packageName,
           wasiRegisterFunctions,
+          this.config.wasm?.initialMemory,
+          this.config.wasm?.maximumMemory,
         ) +
           exportsCode +
           '\n',
@@ -868,7 +934,13 @@ class Builder {
       )
       await writeFileAsync(
         browserBindingPath,
-        createWasiBrowserBinding(name, wasiRegisterFunctions) +
+        createWasiBrowserBinding(
+          name,
+          wasiRegisterFunctions,
+          this.config.wasm?.initialMemory,
+          this.config.wasm?.maximumMemory,
+          this.config.wasm?.browser?.fs,
+        ) +
           idents
             .map(
               (ident) =>
@@ -881,7 +953,7 @@ class Builder {
       await writeFileAsync(workerPath, WASI_WORKER_TEMPLATE, 'utf8')
       await writeFileAsync(
         browserWorkerPath,
-        WASI_WORKER_BROWSER_TEMPLATE,
+        createWasiBrowserWorkerBinding(this.config.wasm?.browser?.fs ?? false),
         'utf8',
       )
       await writeFileAsync(

@@ -246,7 +246,20 @@ function requireNative() {
 
       }
     } else if (process.arch === 'arm') {
+      if (isMusl()) {
+        try {
+        return require('./example.linux-arm-musleabihf.node')
+      } catch (e) {
+        loadErrors.push(e)
+      }
       try {
+        return require('@examples/napi-linux-arm-musleabihf')
+      } catch (e) {
+        loadErrors.push(e)
+      }
+
+      } else {
+        try {
         return require('./example.linux-arm-gnueabihf.node')
       } catch (e) {
         loadErrors.push(e)
@@ -257,6 +270,7 @@ function requireNative() {
         loadErrors.push(e)
       }
 
+      }
     } else if (process.arch === 'riscv64') {
       if (isMusl()) {
         try {
@@ -283,6 +297,18 @@ function requireNative() {
       }
 
       }
+    } else if (process.arch === 'ppc64') {
+      try {
+        return require('./example.linux-ppc64-gnu.node')
+      } catch (e) {
+        loadErrors.push(e)
+      }
+      try {
+        return require('@examples/napi-linux-ppc64-gnu')
+      } catch (e) {
+        loadErrors.push(e)
+      }
+
     } else if (process.arch === 's390x') {
       try {
         return require('./example.linux-s390x-gnu.node')
@@ -358,6 +384,7 @@ module.exports.CSSRuleList = nativeBinding.CSSRuleList
 module.exports.CssStyleSheet = nativeBinding.CssStyleSheet
 module.exports.CSSStyleSheet = nativeBinding.CSSStyleSheet
 module.exports.CustomFinalize = nativeBinding.CustomFinalize
+module.exports.CustomStruct = nativeBinding.CustomStruct
 module.exports.DefaultUseNullableClass = nativeBinding.DefaultUseNullableClass
 module.exports.Dog = nativeBinding.Dog
 module.exports.Fib = nativeBinding.Fib
@@ -374,6 +401,7 @@ module.exports.Optional = nativeBinding.Optional
 module.exports.Selector = nativeBinding.Selector
 module.exports.UseNullableClass = nativeBinding.UseNullableClass
 module.exports.Width = nativeBinding.Width
+module.exports.acceptArraybuffer = nativeBinding.acceptArraybuffer
 module.exports.acceptSlice = nativeBinding.acceptSlice
 module.exports.acceptThreadsafeFunction = nativeBinding.acceptThreadsafeFunction
 module.exports.acceptThreadsafeFunctionFatal = nativeBinding.acceptThreadsafeFunctionFatal
@@ -392,6 +420,7 @@ module.exports.asyncMultiTwo = nativeBinding.asyncMultiTwo
 module.exports.asyncPlus100 = nativeBinding.asyncPlus100
 module.exports.asyncReduceBuffer = nativeBinding.asyncReduceBuffer
 module.exports.asyncTaskOptionalReturn = nativeBinding.asyncTaskOptionalReturn
+module.exports.asyncTaskReadFile = nativeBinding.asyncTaskReadFile
 module.exports.asyncTaskVoidReturn = nativeBinding.asyncTaskVoidReturn
 module.exports.bigintAdd = nativeBinding.bigintAdd
 module.exports.bigintFromI128 = nativeBinding.bigintFromI128
@@ -399,6 +428,7 @@ module.exports.bigintFromI64 = nativeBinding.bigintFromI64
 module.exports.bigintGetU64AsString = nativeBinding.bigintGetU64AsString
 module.exports.bufferPassThrough = nativeBinding.bufferPassThrough
 module.exports.buildThreadsafeFunctionFromFunction = nativeBinding.buildThreadsafeFunctionFromFunction
+module.exports.buildThreadsafeFunctionFromFunctionCalleeHandle = nativeBinding.buildThreadsafeFunctionFromFunctionCalleeHandle
 module.exports.call0 = nativeBinding.call0
 module.exports.call1 = nativeBinding.call1
 module.exports.call2 = nativeBinding.call2
@@ -411,9 +441,16 @@ module.exports.callLongThreadsafeFunction = nativeBinding.callLongThreadsafeFunc
 module.exports.callThreadsafeFunction = nativeBinding.callThreadsafeFunction
 module.exports.captureErrorInCallback = nativeBinding.captureErrorInCallback
 module.exports.chronoDateAdd1Minute = nativeBinding.chronoDateAdd1Minute
-module.exports.chronoDateToMillis = nativeBinding.chronoDateToMillis
+module.exports.chronoDateFixtureReturn1 = nativeBinding.chronoDateFixtureReturn1
+module.exports.chronoDateFixtureReturn2 = nativeBinding.chronoDateFixtureReturn2
+module.exports.chronoDateWithTimezoneReturn = nativeBinding.chronoDateWithTimezoneReturn
+module.exports.chronoDateWithTimezoneToMillis = nativeBinding.chronoDateWithTimezoneToMillis
+module.exports.chronoLocalDateReturn = nativeBinding.chronoLocalDateReturn
+module.exports.chronoLocalDateToMillis = nativeBinding.chronoLocalDateToMillis
 module.exports.chronoNativeDateTime = nativeBinding.chronoNativeDateTime
 module.exports.chronoNativeDateTimeReturn = nativeBinding.chronoNativeDateTimeReturn
+module.exports.chronoUtcDateReturn = nativeBinding.chronoUtcDateReturn
+module.exports.chronoUtcDateToMillis = nativeBinding.chronoUtcDateToMillis
 module.exports.concatLatin1 = nativeBinding.concatLatin1
 module.exports.concatStr = nativeBinding.concatStr
 module.exports.concatUtf16 = nativeBinding.concatUtf16
@@ -427,11 +464,13 @@ module.exports.createExternalTypedArray = nativeBinding.createExternalTypedArray
 module.exports.createObj = nativeBinding.createObj
 module.exports.createObjectWithClassField = nativeBinding.createObjectWithClassField
 module.exports.createObjWithProperty = nativeBinding.createObjWithProperty
+module.exports.createOptionalExternal = nativeBinding.createOptionalExternal
 module.exports.createReferenceOnFunction = nativeBinding.createReferenceOnFunction
 module.exports.createSymbol = nativeBinding.createSymbol
 module.exports.createSymbolFor = nativeBinding.createSymbolFor
 module.exports.CustomNumEnum = nativeBinding.CustomNumEnum
 module.exports.customStatusCode = nativeBinding.customStatusCode
+module.exports.CustomStringEnum = nativeBinding.CustomStringEnum
 module.exports.dateToNumber = nativeBinding.dateToNumber
 module.exports.DEFAULT_COST = nativeBinding.DEFAULT_COST
 module.exports.derefUint8Array = nativeBinding.derefUint8Array
@@ -461,6 +500,7 @@ module.exports.getNestedNumArr = nativeBinding.getNestedNumArr
 module.exports.getNull = nativeBinding.getNull
 module.exports.getNumArr = nativeBinding.getNumArr
 module.exports.getNums = nativeBinding.getNums
+module.exports.getOptionalExternal = nativeBinding.getOptionalExternal
 module.exports.getPackageJsonName = nativeBinding.getPackageJsonName
 module.exports.getStrFromObject = nativeBinding.getStrFromObject
 module.exports.getterFromObj = nativeBinding.getterFromObj
@@ -475,6 +515,7 @@ module.exports.Kind = nativeBinding.Kind
 module.exports.listObjKeys = nativeBinding.listObjKeys
 module.exports.mapOption = nativeBinding.mapOption
 module.exports.mutateExternal = nativeBinding.mutateExternal
+module.exports.mutateOptionalExternal = nativeBinding.mutateOptionalExternal
 module.exports.mutateTypedArray = nativeBinding.mutateTypedArray
 module.exports.objectGetNamedPropertyShouldPerformTypecheck = nativeBinding.objectGetNamedPropertyShouldPerformTypecheck
 module.exports.optionEnd = nativeBinding.optionEnd
@@ -484,6 +525,7 @@ module.exports.optionStartEnd = nativeBinding.optionStartEnd
 module.exports.overrideIndividualArgOnFunction = nativeBinding.overrideIndividualArgOnFunction
 module.exports.overrideIndividualArgOnFunctionWithCbArg = nativeBinding.overrideIndividualArgOnFunctionWithCbArg
 module.exports.panic = nativeBinding.panic
+module.exports.panicInAsync = nativeBinding.panicInAsync
 module.exports.plusOne = nativeBinding.plusOne
 module.exports.promiseInEither = nativeBinding.promiseInEither
 module.exports.readFile = nativeBinding.readFile
@@ -501,7 +543,6 @@ module.exports.referenceAsCallback = nativeBinding.referenceAsCallback
 module.exports.returnEither = nativeBinding.returnEither
 module.exports.returnEitherClass = nativeBinding.returnEitherClass
 module.exports.returnFromSharedCrate = nativeBinding.returnFromSharedCrate
-module.exports.returnJsFunction = nativeBinding.returnJsFunction
 module.exports.returnNull = nativeBinding.returnNull
 module.exports.returnObjectOnlyToJs = nativeBinding.returnObjectOnlyToJs
 module.exports.returnUndefined = nativeBinding.returnUndefined
@@ -510,6 +551,7 @@ module.exports.returnUndefinedIfInvalidPromise = nativeBinding.returnUndefinedIf
 module.exports.roundtripStr = nativeBinding.roundtripStr
 module.exports.runScript = nativeBinding.runScript
 module.exports.setSymbolInObj = nativeBinding.setSymbolInObj
+module.exports.spawnThreadInThread = nativeBinding.spawnThreadInThread
 module.exports.Status = nativeBinding.Status
 module.exports.StringEnum = nativeBinding.StringEnum
 module.exports.sumBtreeMapping = nativeBinding.sumBtreeMapping
@@ -517,6 +559,7 @@ module.exports.sumIndexMapping = nativeBinding.sumIndexMapping
 module.exports.sumMapping = nativeBinding.sumMapping
 module.exports.sumNums = nativeBinding.sumNums
 module.exports.testSerdeBigNumberPrecision = nativeBinding.testSerdeBigNumberPrecision
+module.exports.testSerdeBufferBytes = nativeBinding.testSerdeBufferBytes
 module.exports.testSerdeRoundtrip = nativeBinding.testSerdeRoundtrip
 module.exports.threadsafeFunctionClosureCapture = nativeBinding.threadsafeFunctionClosureCapture
 module.exports.threadsafeFunctionFatalMode = nativeBinding.threadsafeFunctionFatalMode

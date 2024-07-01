@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import path from 'node:path'
 
 import {
@@ -27,6 +28,7 @@ import {
   gitIgnore,
   npmIgnore,
 } from './templates/index.js'
+import { WasiTargetName } from './templates/ci-template.js'
 
 const debug = debugFactory('new')
 
@@ -59,6 +61,20 @@ function processOptions(options: RawNewOptions) {
       debug('Enable default targets')
     } else {
       throw new Error('At least one target must be enabled')
+    }
+  }
+  if (
+    options.targets.some((target) => target === 'wasm32-wasi-preview1-threads')
+  ) {
+    const out = execSync(`rustup target list`, {
+      encoding: 'utf8',
+    })
+    if (out.includes('wasm32-wasip1-threads')) {
+      options.targets.map((target) =>
+        target === 'wasm32-wasi-preview1-threads'
+          ? 'wasm32-wasip1-threads'
+          : target,
+      )
     }
   }
 
@@ -196,6 +212,9 @@ function generateGithubWorkflow(options: NewOptions): Output | null {
     content: createGithubActionsCIYml(
       options.targets,
       options.packageManager as SupportedPackageManager,
+      (options.targets.find((t) =>
+        t.includes('wasm32-wasi'),
+      ) as WasiTargetName) ?? 'wasm32-wasi-preview1-threads',
     ),
   }
 }

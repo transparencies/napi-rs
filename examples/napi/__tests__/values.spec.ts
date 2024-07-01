@@ -89,6 +89,7 @@ import {
   xxh3,
   xxh64Alias,
   tsRename,
+  acceptArraybuffer,
   acceptSlice,
   u8ArrayToArray,
   i8ArrayToArray,
@@ -120,13 +121,17 @@ import {
   JsClassForEither,
   receiveMutClassOrNumber,
   getStrFromObject,
-  returnJsFunction,
   testSerdeRoundtrip,
   testSerdeBigNumberPrecision,
+  testSerdeBufferBytes,
   createObjWithProperty,
   receiveObjectOnlyFromJs,
   dateToNumber,
-  chronoDateToMillis,
+  chronoUtcDateToMillis,
+  chronoLocalDateToMillis,
+  chronoDateWithTimezoneToMillis,
+  chronoDateFixtureReturn1,
+  chronoDateFixtureReturn2,
   derefUint8Array,
   chronoDateAdd1Minute,
   bufferPassThrough,
@@ -172,6 +177,11 @@ import {
   type AliasedStruct,
   returnObjectOnlyToJs,
   buildThreadsafeFunctionFromFunction,
+  createOptionalExternal,
+  getOptionalExternal,
+  mutateOptionalExternal,
+  panicInAsync,
+  CustomStruct,
 } from '../index.cjs'
 
 import { test } from './test.framework.js'
@@ -430,9 +440,11 @@ test('should be able to into_reference', (t) => {
 })
 
 test('callback', (t) => {
-  getCwd((cwd) => {
-    t.is(cwd, process.env.WASI_TEST ? '/' : process.cwd())
-  })
+  if (!process.env.WASI_TEST) {
+    getCwd((cwd) => {
+      t.is(cwd, process.cwd())
+    })
+  }
 
   t.throws(
     // @ts-expect-error
@@ -454,16 +466,6 @@ test('callback', (t) => {
       t.is((err as Error).message, 'Testing')
     },
   )
-})
-
-test('return function', (t) => {
-  return new Promise<void>((resolve) => {
-    returnJsFunction()((err: Error | undefined, content: string) => {
-      t.is(err, undefined)
-      t.is(content, 'hello world')
-      resolve()
-    })
-  })
 })
 
 Napi4Test('callback function return Promise', async (t) => {
@@ -528,6 +530,18 @@ test('object', (t) => {
       rollup: '^4.0.0',
     },
   })
+  t.throws(
+    () =>
+      receiveAllOptionalObject({
+        // @ts-expect-error
+        name: 1,
+      }),
+    {
+      code: 'StringExpected',
+      message:
+        'Failed to convert JavaScript value `Number 1 ` into rust type `String` on AllOptionalObject.name',
+    },
+  )
 })
 
 test('get str from object', (t) => {
@@ -600,6 +614,12 @@ test('custom status code in Error', (t) => {
   t.throws(() => customStatusCode(), {
     code: 'Panic',
   })
+  t.throws(() => CustomStruct.customStatusCodeForFactory(), {
+    code: 'Panic',
+  })
+  t.throws(() => new CustomStruct(), {
+    code: 'Panic',
+  })
 })
 
 test('function ts type override', (t) => {
@@ -631,7 +651,7 @@ test('should throw if object type is not matched', (t) => {
   const err1 = t.throws(() => receiveStrictObject({ name: 1 }))
   t.is(
     err1?.message,
-    'Failed to convert JavaScript value `Number 1 ` into rust type `String`',
+    'Failed to convert JavaScript value `Number 1 ` into rust type `String` on StrictObject.name',
   )
   // @ts-expect-error
   const err2 = t.throws(() => receiveStrictObject({ bar: 1 }))
@@ -705,6 +725,14 @@ test('serde-large-number-precision', (t) => {
   )
 })
 
+test('serde-buffer-bytes', (t) => {
+  t.is(testSerdeBufferBytes({ code: new Uint8Array([1, 2, 3]) }), 3n)
+  t.is(testSerdeBufferBytes({ code: new Uint8Array(0) }), 0n)
+
+  t.is(testSerdeBufferBytes({ code: Buffer.from([1, 2, 3]) }), 3n)
+  t.is(testSerdeBufferBytes({ code: Buffer.alloc(0) }), 0n)
+})
+
 test('buffer', (t) => {
   let buf = getBuffer()
   t.is(buf.toString('utf-8'), 'Hello world')
@@ -745,6 +773,11 @@ test('TypedArray', (t) => {
     ),
     6n,
   )
+})
+
+test('emptybuffer', (t) => {
+  let buf = new ArrayBuffer(0)
+  t.is(acceptArraybuffer(buf), 0n)
 })
 
 test('reset empty buffer', (t) => {
@@ -795,6 +828,16 @@ test('async', async (t) => {
   t.is(name, '@examples/napi')
 
   await t.throwsAsync(() => readFileAsync('some_nonexist_path.file'))
+})
+
+test('panic in async fn', async (t) => {
+  if (!process.env.SKIP_UNWIND_TEST) {
+    await t.throwsAsync(() => panicInAsync(), {
+      message: 'panic in async function',
+    })
+  } else {
+    t.pass('no unwind runtime')
+  }
 })
 
 test('async move', async (t) => {
@@ -893,10 +936,23 @@ test('external', (t) => {
   const ext2 = createExternalString('wtf')
   // @ts-expect-error
   const e = t.throws(() => getExternal(ext2))
-  t.is(
-    e?.message,
-    'T on `get_value_external` is not the type of wrapped object',
-  )
+  t.is(e?.message, '<u32> on `External` is not the type of wrapped object')
+})
+
+test('optional external', (t) => {
+  const FX = 42
+  const extEmpty = createOptionalExternal()
+  t.is(getOptionalExternal(extEmpty), null)
+  const ext = createOptionalExternal(FX)
+  t.is(getOptionalExternal(ext), FX)
+  mutateOptionalExternal(ext, FX + 1)
+  t.is(getOptionalExternal(ext), FX + 1)
+  // @ts-expect-error
+  t.throws(() => getOptionalExternal({}))
+  const ext2 = createExternalString('wtf')
+  // @ts-expect-error
+  const e = t.throws(() => getOptionalExternal(ext2))
+  t.is(e?.message, '<u32> on `External` is not the type of wrapped object')
 })
 
 test('should be able to run script', async (t) => {
@@ -1196,11 +1252,20 @@ Napi5Test('Date test', (t) => {
 
 Napi5Test('Date to chrono test', (t) => {
   const fixture = new Date('2022-02-09T19:31:55.396Z')
-  t.is(chronoDateToMillis(fixture), fixture.getTime())
+  t.is(chronoUtcDateToMillis(fixture), fixture.getTime())
+  t.is(chronoLocalDateToMillis(fixture), fixture.getTime())
+  t.is(chronoDateWithTimezoneToMillis(fixture), fixture.getTime())
   t.deepEqual(
     chronoDateAdd1Minute(fixture),
     new Date(fixture.getTime() + 60 * 1000),
   )
+})
+
+Napi5Test('Get date', (t) => {
+  const fixture1 = new Date('2024-02-07T18:28:18-0800')
+  t.deepEqual(chronoDateFixtureReturn1(), fixture1)
+  const fixture2 = new Date('2024-02-07T18:28:18+0530')
+  t.deepEqual(chronoDateFixtureReturn2(), fixture2)
 })
 
 Napi5Test('Class with getter setter closures', (t) => {

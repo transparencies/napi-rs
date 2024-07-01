@@ -1,6 +1,14 @@
 import type { SupportedPackageManager } from '../../utils/config.js'
 
-export const YAML = (packageManager: SupportedPackageManager) => `
+export type WasiTargetName =
+  | 'wasm32-wasi-preview1-threads'
+  | 'wasm32-wasip1-threads'
+  | 'wasm32-wasip2'
+
+export const YAML = (
+  packageManager: SupportedPackageManager,
+  wasiTargetName: WasiTargetName,
+) => `
 name: CI
 
 env:
@@ -34,7 +42,7 @@ jobs:
         settings:
           - host: macos-latest
             target: 'x86_64-apple-darwin'
-            build: ${packageManager} build --platform
+            build: ${packageManager} build --platform --target x86_64-apple-darwin
           - host: windows-latest
             build: ${packageManager} build --platform
             target: 'x86_64-pc-windows-msvc'
@@ -59,6 +67,9 @@ jobs:
             target: 'armv7-unknown-linux-gnueabihf'
             build: ${packageManager} build --platform --target armv7-unknown-linux-gnueabihf --use-napi-cross
           - host: ubuntu-latest
+            target: 'armv7-unknown-linux-musleabihf'
+            build: ${packageManager} build --platform --target armv7-unknown-linux-musleabihf -x
+          - host: ubuntu-latest
             target: 'aarch64-linux-android'
             build: ${packageManager} build --platform --target aarch64-linux-android
           - host: ubuntu-latest
@@ -77,8 +88,20 @@ jobs:
               sudo apt-get install gcc-riscv64-linux-gnu -y
             build: ${packageManager} build --platform --target riscv64gc-unknown-linux-gnu
           - host: ubuntu-latest
-            target: 'wasm32-wasi-preview1-threads'
-            build: ${packageManager} build --platform --target wasm32-wasi-preview1-threads
+            target: 'powerpc64le-unknown-linux-gnu'
+            setup: |
+              sudo apt-get update
+              sudo apt-get install gcc-powerpc64le-linux-gnu -y
+            build: ${packageManager} build --platform --target powerpc64le-unknown-linux-gnu
+          - host: ubuntu-latest
+            target: 's390x-unknown-linux-gnu'
+            setup: |
+              sudo apt-get update
+              sudo apt-get install gcc-s390x-linux-gnu -y
+            build: ${packageManager} build --platform --target s390x-unknown-linux-gnu
+          - host: ubuntu-latest
+            target: '${wasiTargetName}'
+            build: ${packageManager} build --platform --target ${wasiTargetName}
 
     name: stable - \${{ matrix.settings.target }} - node@20
     runs-on: \${{ matrix.settings.host }}
@@ -113,7 +136,7 @@ jobs:
       - uses: goto-bus-stop/setup-zig@v2
         if: \${{ contains(matrix.settings.target, 'musl') }}
         with:
-          version: 0.11.0
+          version: 0.12.0
 
       - name: Setup toolchain
         run: \${{ matrix.settings.setup }}
@@ -141,7 +164,7 @@ jobs:
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: matrix.settings.target != 'wasm32-wasi-preview1-threads'
+        if: matrix.settings.target != '${wasiTargetName}'
         with:
           name: bindings-\${{ matrix.settings.target }}
           path: "*.node"
@@ -149,7 +172,7 @@ jobs:
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: matrix.settings.target == 'wasm32-wasi-preview1-threads'
+        if: matrix.settings.target == '${wasiTargetName}'
         with:
           name: bindings-\${{ matrix.settings.target }}
           path: "*.wasm"
@@ -162,7 +185,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build
         id: build
-        uses: cross-platform-actions/action@v0.21.1
+        uses: cross-platform-actions/action@v0.23.0
         timeout-minutes: 30
         env:
           DEBUG: 'napi:*'
@@ -496,7 +519,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: bindings-wasm32-wasi-preview1-threads
+          name: bindings-${wasiTargetName}
           path: .
       - name: List packages
         run: ls -R .

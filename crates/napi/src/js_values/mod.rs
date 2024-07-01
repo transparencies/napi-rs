@@ -46,7 +46,7 @@ pub use buffer::*;
 #[cfg(feature = "napi5")]
 pub use date::*;
 #[cfg(feature = "serde-json")]
-pub(crate) use de::De;
+pub use de::De;
 #[cfg(feature = "napi4")]
 pub use deferred::*;
 pub use either::Either;
@@ -57,7 +57,7 @@ pub use number::JsNumber;
 pub use object::*;
 pub use object_property::*;
 #[cfg(feature = "serde-json")]
-pub(crate) use ser::Ser;
+pub use ser::Ser;
 pub use string::*;
 pub(crate) use tagged_object::TaggedObject;
 pub use undefined::JsUndefined;
@@ -98,6 +98,7 @@ impl TypeName for JsSymbol {
 
 impl ValidateNapiValue for JsSymbol {}
 
+#[deprecated(since = "3.0.0", note = "Please use `External` instead")]
 pub struct JsExternal(pub(crate) Value);
 
 impl TypeName for JsExternal {
@@ -368,7 +369,7 @@ macro_rules! impl_object_methods {
         unsafe { <T as FromNapiValue>::from_napi_value(self.0.env, raw_value) }
       }
 
-      pub fn get_named_property_unchecked<T: FromNapiValue>(&self, name: &str) -> Result<T>
+      pub fn get_named_property_unchecked<T>(&self, name: &str) -> Result<T>
       where
         T: FromNapiValue,
       {

@@ -780,15 +780,54 @@ pub use napi8::*;
 #[cfg(feature = "napi9")]
 pub use napi9::*;
 
-#[cfg(windows)]
-pub(super) unsafe fn load_all() -> Result<libloading::Library, libloading::Error> {
-  let host = match libloading::os::windows::Library::this() {
-    Ok(lib) => lib.into(),
-    Err(err) => {
-      eprintln!("Initialize libloading failed {}", err);
-      return Err(err);
+#[cfg(all(windows, not(target_env = "msvc"), feature = "dyn-symbols"))]
+fn test_library(
+  lib_result: Result<libloading::os::windows::Library, libloading::Error>,
+) -> Result<libloading::Library, libloading::Error> {
+  unsafe {
+    match lib_result {
+      Ok(lib) => {
+        let symbol: Result<
+          libloading::os::windows::Symbol<unsafe extern "C" fn()>,
+          libloading::Error,
+        > = lib.get(b"napi_create_int32\0");
+        match symbol {
+          Ok(_) => Ok(lib.into()),
+          Err(err) => Err(err),
+        }
+      }
+      Err(err) => Err(err),
     }
+  }
+}
+
+#[cfg(all(windows, not(target_env = "msvc"), feature = "dyn-symbols"))]
+fn find_node_library() -> Result<libloading::Library, libloading::Error> {
+  return unsafe {
+    test_library(libloading::os::windows::Library::this())
+      .or(test_library(
+        libloading::os::windows::Library::open_already_loaded("libnode"),
+      ))
+      .or(test_library(
+        libloading::os::windows::Library::open_already_loaded("node"),
+      ))
+      .or(test_library(libloading::os::windows::Library::new("node")))
+      .or(test_library(libloading::os::windows::Library::new(
+        "libnode",
+      )))
   };
+}
+
+#[cfg(any(target_env = "msvc", feature = "dyn-symbols"))]
+pub(super) unsafe fn load_all() -> Result<libloading::Library, libloading::Error> {
+  #[cfg(all(windows, target_env = "msvc"))]
+  let host = libloading::os::windows::Library::this()?.into();
+
+  #[cfg(all(windows, not(target_env = "msvc")))]
+  let host = find_node_library()?.into();
+
+  #[cfg(unix)]
+  let host = libloading::os::unix::Library::this().into();
 
   napi1::load(&host)?;
   #[cfg(feature = "napi2")]

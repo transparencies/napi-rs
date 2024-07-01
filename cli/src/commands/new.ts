@@ -39,13 +39,7 @@ export class NewCommand extends BaseNewCommand {
     if (this.interactive) {
       const targetPath: string = cmdOptions.path
         ? cmdOptions.path
-        : await inquirer
-            .prompt({
-              type: 'input',
-              name: 'path',
-              message: 'Target path to create the project, relative to cwd',
-            })
-            .then(({ path }) => path)
+        : await inquirerProjectPath()
       cmdOptions.path = targetPath
       return {
         ...cmdOptions,
@@ -64,14 +58,14 @@ export class NewCommand extends BaseNewCommand {
   private async fetchName(defaultName: string): Promise<string> {
     return (
       this.$$name ??
-      (await inquirer
+      inquirer
         .prompt({
           type: 'input',
           name: 'name',
           message: 'Package name (the name field in your package.json file)',
           default: defaultName,
         })
-        .then(({ name }) => name))
+        .then(({ name }) => name)
     )
   }
 
@@ -93,7 +87,7 @@ export class NewCommand extends BaseNewCommand {
         name: 'minNodeApiVersion',
         message: 'Minimum node-api version (with node version requirement)',
         loop: false,
-        choices: new Array(8).fill(0).map((_, i) => ({
+        choices: Array.from({ length: 8 }, (_, i) => ({
           name: `napi${i + 1} (${napiEngineRequirement(i + 1)})`,
           value: i + 1,
         })),
@@ -141,4 +135,19 @@ export class NewCommand extends BaseNewCommand {
 
     return enableGithubActions
   }
+}
+
+async function inquirerProjectPath(): Promise<string> {
+  return inquirer
+    .prompt({
+      type: 'input',
+      name: 'path',
+      message: 'Target path to create the project, relative to cwd.',
+    })
+    .then(({ path }) => {
+      if (!path) {
+        return inquirerProjectPath()
+      }
+      return path
+    })
 }

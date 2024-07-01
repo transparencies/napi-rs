@@ -148,6 +148,75 @@ fn find_ts_arg_type_and_remove_attribute(
   }
 }
 
+fn find_enum_value_and_remove_attribute(v: &mut syn::Variant) -> BindgenResult<Option<String>> {
+  let mut name_attr: Option<(usize, String)> = None;
+  for (idx, attr) in v.attrs.iter().enumerate() {
+    if attr.path().is_ident("napi") {
+      match &attr.meta {
+        syn::Meta::Path(_) | syn::Meta::NameValue(_) => {
+          bail_span!(
+            attr,
+            "Expects an assignment #[napi(value = \"enum-variant-value\")]"
+          )
+        }
+        syn::Meta::List(list) => {
+          let mut found = false;
+          list
+            .parse_args_with(|tokens: &syn::parse::ParseBuffer<'_>| {
+              // tokens:
+              // #[napi(xxx, xxx=xxx)]
+              //        ^^^^^^^^^^^^
+              let list = tokens.parse_terminated(Meta::parse, Token![,])?;
+
+              for meta in list {
+                if meta.path().is_ident("value") {
+                  match meta {
+                    Meta::Path(_) | Meta::List(_) => {
+                      return Err(syn::Error::new(
+                        meta.path().span(),
+                        "Expects an assignment (value = \"enum-variant-value\")",
+                      ))
+                    }
+                    Meta::NameValue(name_value) => match name_value.value {
+                      syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(str),
+                        ..
+                      }) => {
+                        let value = str.value();
+                        found = true;
+                        name_attr = Some((idx, value));
+                      }
+                      _ => {
+                        return Err(syn::Error::new(
+                          name_value.value.span(),
+                          "Expects a string literal",
+                        ))
+                      }
+                    },
+                  }
+                }
+              }
+
+              Ok(())
+            })
+            .map_err(Diagnostic::from)?;
+
+          if !found {
+            bail_span!(attr, "Expects a 'value'");
+          }
+        }
+      }
+    }
+  }
+
+  if let Some((idx, value)) = name_attr {
+    v.attrs.remove(idx);
+    Ok(Some(value))
+  } else {
+    Ok(None)
+  }
+}
+
 fn get_ty(mut ty: &syn::Type) -> &syn::Type {
   while let syn::Type::Group(g) = ty {
     ty = &g.elem;
@@ -559,7 +628,7 @@ fn napi_fn_from_decl(
     }
   };
 
-  Diagnostic::from_vec(errors).map(|_| {
+  Diagnostic::from_vec(errors).and_then(|_| {
     let js_name = if let Some(prop_name) = opts.getter() {
       opts.js_name().map_or_else(
         || {
@@ -611,7 +680,16 @@ fn napi_fn_from_decl(
       false
     };
 
-    NapiFn {
+    let kind = fn_kind(opts);
+
+    if !matches!(kind, FnKind::Normal) && parent.is_none() {
+      bail_span!(
+        sig.ident,
+        "Only fn in impl block can be marked as factory, constructor, getter or setter"
+      );
+    }
+
+    Ok(NapiFn {
       name: ident.clone(),
       js_name,
       args,
@@ -619,7 +697,7 @@ fn napi_fn_from_decl(
       is_ret_result,
       is_async: asyncness.is_some(),
       vis,
-      kind: fn_kind(opts),
+      kind,
       fn_self,
       parent: parent.cloned(),
       comments: extract_doc_comments(&attrs),
@@ -638,7 +716,7 @@ fn napi_fn_from_decl(
       catch_unwind: opts.catch_unwind().is_some(),
       unsafe_: sig.unsafety.is_some(),
       register_name: get_register_ident(ident.to_string().as_str()),
-    }
+    })
   })
 }
 
@@ -1061,6 +1139,7 @@ impl ConvertToAST for syn::ItemEnum {
       .js_name()
       .map_or_else(|| self.ident.to_string(), |(s, _)| s.to_string());
 
+    let is_string_enum = opts.string_enum().is_some();
     let variants = match opts.string_enum() {
       Some(case) => {
         let case = case.map(|c| Ok::<Case, Diagnostic>(match c.0.as_str() {
@@ -1079,7 +1158,7 @@ impl ConvertToAST for syn::ItemEnum {
 
         self
           .variants
-          .iter()
+          .iter_mut()
           .map(|v| {
             if !matches!(v.fields, syn::Fields::Unit) {
               bail_span!(v.fields, "Structured enum is not supported in #[napi]")
@@ -1091,10 +1170,13 @@ impl ConvertToAST for syn::ItemEnum {
               )
             }
 
-            let mut val = v.ident.to_string();
-            if let Some(case) = case {
-              val = val.to_case(case)
-            };
+            let val = find_enum_value_and_remove_attribute(v)?.unwrap_or_else(|| {
+              let mut val = v.ident.to_string();
+              if let Some(case) = case {
+                val = val.to_case(case)
+              }
+              val
+            });
 
             Ok(NapiEnumVariant {
               name: v.ident.clone(),
@@ -1174,6 +1256,7 @@ impl ConvertToAST for syn::ItemEnum {
         comments: extract_doc_comments(&self.attrs),
         skip_typescript: opts.skip_typescript().is_some(),
         register_name: get_register_ident(self.ident.to_string().as_str()),
+        is_string_enum,
       }),
     })
   }

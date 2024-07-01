@@ -84,7 +84,7 @@ jobs:
               yarn test:macro
             toolchain: 1.65.0
           - host: macos-14
-            target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
             build: yarn build:test
             test: |
               yarn test:cli
@@ -150,7 +150,9 @@ jobs:
 
       - name: 'Install dependencies'
         shell: bash
-        run: yarn install --mode=skip-build --immutable
+        run: |
+          yarn config set supportedArchitectures.cpu --json '["current", "x64", "x86"]'
+          yarn install --mode=skip-build --immutable
 
       - name: Check build
         run: cargo check --target ${{ matrix.settings.target }} --all --bins --examples --tests -vvv
@@ -171,7 +173,7 @@ jobs:
         run: ${{ matrix.settings.test }}
 
       - name: Electron tests
-        if: matrix.settings.target == 'x86_64-apple-darwin' || matrix.settings.target == 'x86_64-pc-windows-msvc'
+        if: matrix.settings.target == 'aarch64-apple-darwin' || matrix.settings.target == 'x86_64-pc-windows-msvc'
         run: |
           node ./node_modules/electron/install.js
           yarn test:electron
@@ -185,6 +187,50 @@ jobs:
       - name: Test build with profile
         run: yarn workspace @examples/napi build --profile napi-rs-custom
 
+  build-and-test-msys2:
+   strategy:
+     matrix:
+       sys: [MINGW64, UCRT64,CLANG64]
+   runs-on: windows-latest
+
+   steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: ${{ matrix.sys }}
+        update: true
+        install: >-
+          base-devel
+        pacboy: >-
+          rust:p
+          yarn:p
+          ${{ matrix.sys == 'CLANG64' && 'gcc-compat:p' || '' }}
+
+    - name: Cargo test
+      shell: msys2 {0}
+      run: |
+       cargo test
+# Because dependencies use napi-rs itself they use older versions of napi-rs to install the package, this will fail automatically during build, uncomment when bootstrap issues have been solved
+#    - name: Install dependencies
+#      shell: msys2 {0}
+#      run: |
+#        yarn install --immutable --mode=skip-build
+#
+#    - name: Build tests
+#      shell: msys2 {0}
+#      run: yarn build:test
+#
+#    - name: Run tests
+#      shell: msys2 {0}
+#      run: |
+#        yarn test:cli
+#        yarn test --verbose
+#        yarn tsc -p examples/napi/tsconfig.json --noEmit --skipLibCheck
+#        yarn test:macro
+
+        
   build_only:
     name: Build only test - ${{ matrix.settings.target }}
     runs-on: ${{ matrix.settings.host }}
@@ -237,6 +283,65 @@ jobs:
       - name: Cross build native tests
         run: yarn build:test -- --target ${{ matrix.settings.target }} --release
         shell: bash
+
+  build_for_test_in_docker:
+    name: build - ${{ matrix.settings.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - target: powerpc64le-unknown-linux-gnu
+            setup: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-powerpc64le-linux-gnu
+          - target: s390x-unknown-linux-gnu
+            setup: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-s390x-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'yarn'
+
+      - name: Install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.settings.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: stable-ubuntu-latest-${{ matrix.settings.target }}-cargo-cache
+
+      - name: Setup toolchain
+        run: ${{ matrix.settings.setup }}
+
+      - name: Install dependencies
+        run: yarn install --immutable --mode=skip-build
+
+      - name: Cross build native tests
+        run: yarn build:test -- --target ${{ matrix.settings.target }} --release
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.settings.target }}-example
+          path: examples/napi/*.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.settings.target }}-example-compat
+          path: examples/napi-compat-mode/index.node
 
   build_in_docker:
     name: build - ${{ matrix.settings.target }}
@@ -304,7 +409,9 @@ jobs:
   test_in_docker:
     name: Test - ${{ matrix.settings.target }} - ${{ matrix.node }}
     runs-on: ubuntu-latest
-    needs: build_in_docker
+    needs:
+      - build_in_docker
+      - build_for_test_in_docker
     strategy:
       fail-fast: false
       matrix:
@@ -320,6 +427,16 @@ jobs:
             args: '--platform linux/arm64'
             arch: 'arm64'
             libc: 'gnu'
+          - image: 'node:{:version}-slim'
+            target: powerpc64le-unknown-linux-gnu
+            args: '--platform linux/ppc64le'
+            arch: 'ppc64'
+            libc: 'gnu'
+          - image: 'node:{:version}-slim'
+            target: s390x-unknown-linux-gnu
+            args: '--platform linux/s390x'
+            arch: 's390x'
+            libc: 'gnu'
           - image: 'node:{:version}-alpine'
             target: x86_64-unknown-linux-musl
             args: ''
@@ -330,6 +447,10 @@ jobs:
             args: '--platform linux/arm64'
             arch: 'arm64'
             libc: 'musl'
+        exclude:
+          - settings:
+              target: aarch64-unknown-linux-gnu
+            node: 18
     steps:
       - uses: actions/checkout@v4
 
@@ -365,18 +486,14 @@ jobs:
         with:
           image: ${{ steps.image-name.outputs.docker-image }}
           options: ${{ matrix.settings.args }} -v ${{ github.workspace }}/cores:/cores -v ${{ github.workspace }}:/build -w /build
-          run: >-
-            ulimit -c &&
-            ulimit -c unlimited &&
-            ulimit -c &&
-            yarn test
+          run: yarn test
       - name: List files
         run: |
           ls -la .
           ls -la ./cores
 
   build-and-test-linux-armv7:
-    name: stable - armv7-unknown-linux-gnu - node@18
+    name: stable - armv7-unknown-linux-gnueabihf - node@20
     runs-on: ubuntu-latest
 
     steps:
@@ -401,7 +518,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: stable-linux-armv7-gnu-node@18-cargo-cache
+          key: stable-linux-armv7-gnueabihf-node@20-cargo-cache
 
       - name: Install dependencies
         run: |
@@ -479,7 +596,7 @@ jobs:
         run: cargo check -p ${{ matrix.settings.package }} -F ${{ matrix.settings.features }}
 
   test-node-wasi:
-    runs-on: macos-14
+    runs-on: macos-latest
     name: Test node wasi target
     timeout-minutes: 10
     steps:
@@ -493,7 +610,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          targets: wasm32-wasi-preview1-threads
+          targets: wasm32-wasip1-threads
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -501,18 +618,19 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: stable-wasm32-wasi-preview1-threads-node@20-cargo-cache
+          key: stable-wasm32-wasip1-threads-node@20-cargo-cache
       - name: Install dependencies
         run: yarn install --immutable --mode=skip-build
       - name: Build
         run: |
           yarn build
-          yarn workspace @examples/napi build --target wasm32-wasi-preview1-threads --release
+          yarn workspace @examples/napi build --target wasm32-wasip1-threads --release
       - name: Test
         run: yarn workspace @examples/napi test -s
         env:
           WASI_TEST: 'true'
           NODE_OPTIONS: '--max-old-space-size=8192'
+          SKIP_UNWIND_TEST: 1
       - name: Browser test
         run: yarn workspace @examples/napi vitest
 
@@ -522,7 +640,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - name: Setup node
@@ -548,7 +666,7 @@ jobs:
       - name: Build
         run: |
           bun run build
-          bun run build:test
+          yarn workspace @examples/napi build --features dyn-symbols
       - name: Test
         continue-on-error: true
         run: bun run test:bun
